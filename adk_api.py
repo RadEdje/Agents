@@ -30,9 +30,9 @@ app = get_fast_api_app(
 
 
 # # Uncomment the following lines to run the FastAPI app with Uvicorn on a local server
-# if __name__ == "__main__":
-#     uvicorn.run(
-#         app,
-#         host="0.0.0.0",
-#         # port=int(os.environ.get("PORT", 8000))
-#     )
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        # port=int(os.environ.get("PORT", 8000))
+    )

@@ -28,8 +28,10 @@ pip install -r requirements.txt
 # V. Test locally with adk web
 
 # VI. Test fastAPI (use google.adk.cli.fast_api)
-1. Locally
-2. Online
+## 1. Locally (using Ollama)
+## 2. Online
+### 1. Try render.com (limited free)
+### 2. Try google cloud (future test)
 
 
 
