@@ -38,5 +38,5 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        # port=int(os.environ.get("PORT", 8000)) #comment this out if on local pc to protect your ports
+        port=int(os.environ.get("PORT", 8000)) #comment this out if on local pc to protect your ports
     )
