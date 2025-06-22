@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADK Agent Chat (Web App)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .chat-container {
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative; /* Needed for dropzone overlay */
+        }
+        .chat-header {
+            background-color: #007bff;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 1.2em;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+        }
+        .chat-messages {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 70vh; /* Limit height of chat window */
+            border-bottom: 1px solid #eee;
+        }
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+        .message.user {
+            align-items: flex-end;
+        }
+        .message.agent {
+            align-items: flex-start;
+        }
+        .message-bubble {
+            padding: 10px 15px;
+            border-radius: 18px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        .message.user .message-bubble {
+            background-color: #dcf8c6;
+            color: #333;
+            border-bottom-right-radius: 2px;
+        }
+        .message.agent .message-bubble {
+            background-color: #e0e0e0;
+            color: #333;
+            border-bottom-left-radius: 2px;
+        }
+        /* Style for images within chat bubbles */
+        .message-bubble img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 5px;
+            margin-top: 5px;
+        }
+        .chat-input-form {
+            display: flex;
+            padding: 15px;
+            border-top: 1px solid #eee;
+        }
+        .chat-input-form input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            margin-right: 10px;
+            font-size: 1em;
+            outline: none;
+        }
+        .chat-input-form button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background-color 0.2s;
+        }
+        .chat-input-form button:hover {
+            background-color: #0056b3;
+        }
+        .loading-dots {
+            display: inline-block;
+            margin-left: 5px;
+            color: #555;
+        }
+        .loading-dots::after {
+            content: ' .';
+            animation: dots 1s steps(5, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% {
+                color: rgba(0,0,0,0);
+                text-shadow:
+                    .25em 0 0 rgba(0,0,0,0),
+                    .5em 0 0 rgba(0,0,0,0);
+            }
+            40% {
+                color: #555;
+                text-shadow:
+                    .25em 0 0 rgba(0,0,0,0),
+                    .5em 0 0 rgba(0,0,0,0);
+            }
+            60% {
+                text-shadow:
+                    .25em 0 0 #555,
+                    .5em 0 0 rgba(0,0,0,0);
+            }
+            80%, 100% {
+                text-shadow:
+                    .25em 0 0 #555,
+                    .5em 0 0 #555;
+            }
+        }
+
+        /* Drag and Drop styles */
+        .drop-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 123, 255, 0.2);
+            border: 2px dashed #007bff;
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #007bff;
+            font-size: 1.5em;
+            font-weight: bold;
+            pointer-events: none; /* Allows clicks/interactions on elements beneath */
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 10;
+        }
+        .chat-container.drag-over .drop-overlay {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container" id="chatContainer">
+        <div class="drop-overlay">Drop file here</div>
+        <div class="chat-header">
+            RadHorizon's <br> Radiology <br> Google ADK <br> Agent Chat <br> (Search, Email, and more)
+        </div>
+        <div class="chat-messages" id="chatMessages">
+        </div>
+        <form class="chat-input-form" id="chatForm">
+            <input type="text" id="userInput" placeholder="Type your message..." autocomplete="off">
+            <button type="submit" id="sendButton">Send</button>
+        </form>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chatContainer');
+        const chatMessages = document.getElementById('chatMessages');
+        const chatForm = document.getElementById('chatForm');
+        const userInput = document.getElementById('userInput');
+        const sendButton = document.getElementById('sendButton');
+
+        const appName = 'Agent_1'; // Replace with your actual app name
+        const ADK_AGENT_URL = 'http://localhost:8000/run';
+        const ADK_SESSION_CREATION_URL_BASE = 'http://localhost:8000'; // Base URL for session creation
+
+        let currentSessionId = null; // Will store the active session ID
+        let currentUserId = null; // Will store the active user ID
+
+        // Function to add a message to the chat interface
+        function addMessage(role, content, filePreview = null) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', role);
+
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.classList.add('message-bubble');
+
+            if (filePreview) {
+                const img = document.createElement('img');
+                img.src = filePreview;
+                img.style.maxWidth = '100%';
+                img.style.height = 'auto';
+                img.style.borderRadius = '5px';
+                img.style.marginBottom = content ? '5px' : '0'; // Add margin if there's text too
+                bubbleDiv.appendChild(img);
+            }
+
+            if (content) {
+                // Sanitize content if it's user input to prevent XSS, but innerHTML is used here for simplicity
+                // For production, consider a DOMPurify-like solution for user-generated HTML.
+                const textNode = document.createElement('span');
+                textNode.textContent = content;
+                bubbleDiv.appendChild(textNode);
+            }
+
+
+            messageDiv.appendChild(bubbleDiv);
+            chatMessages.appendChild(messageDiv);
+
+            // Scroll to the bottom of the chat
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Function to create a session
+        async function createSession(appName, userId) {
+            const sessionId = crypto.randomUUID();
+            const url = `${ADK_SESSION_CREATION_URL_BASE}/apps/${appName}/users/${userId}/sessions/${sessionId}`;
+            const emptyPayload = {};
+
+            try {
+                console.log(`Attempting to create session for App: ${appName}, User: ${userId}, Session: ${sessionId}`);
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(emptyPayload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Failed to create session! Status: ${response.status}, Detail: ${errorData.detail || 'Unknown error'}`);
+                }
+
+                const responseData = await response.json();
+                console.log('Session created successfully:', responseData);
+                console.log('Using Session ID for /run requests:', sessionId);
+                return sessionId; // Return only the session ID
+
+            } catch (error) {
+                console.error('Error creating session:', error);
+                addMessage('agent', `<span style="color: red;">Error: Could not start new chat session. ${error.message}</span>`);
+                throw error;
+            }
+        }
+
+        // Initialize session when the page loads
+        document.addEventListener('DOMContentLoaded', async () => {
+            currentUserId = crypto.randomUUID(); // Generate a user ID once per page load
+            console.log('User ID:', currentUserId);
+
+            try {
+                currentSessionId = await createSession(appName, currentUserId);
+                addMessage('agent', 'Hello! How can I help you today?');
+            } catch (error) {
+                console.error("Failed to initialize session on page load.", error);
+                // Error message already added by createSession
+            }
+        });
+
+
+        // Handle form submission
+        chatForm.addEventListener('submit', async (event) => {
+            event.preventDefault(); // Prevent default form submission (page reload)
+
+            const userMessage = userInput.value.trim();
+            const droppedFile = chatForm.dataset.droppedFile; // Retrieve dropped file data if any
+            const droppedFileName = chatForm.dataset.droppedFileName;
+            const droppedFileMimeType = chatForm.dataset.droppedFileMimeType;
+            let filePreview = null; // To display the image preview in the chat bubble
+
+            if (userMessage === '' && !droppedFile) {
+                return; // Don't send empty messages or no message/file
+            }
+
+            // Display user message and/or image
+            if (droppedFile && droppedFileMimeType.startsWith('image/')) {
+                filePreview = droppedFile; // Base64 string is directly usable as src
+                addMessage('user', userMessage, filePreview);
+            } else if (userMessage) {
+                addMessage('user', userMessage);
+            } else if (droppedFile && droppedFileName) {
+                // For non-image files, just indicate it was sent
+                addMessage('user', `Sent file: ${droppedFileName}`);
+            }
+
+            userInput.value = ''; // Clear the input field
+            sendButton.disabled = true; // Disable button while thinking
+            userInput.disabled = true;
+
+            // Clear dropped file data after adding to message
+            delete chatForm.dataset.droppedFile;
+            delete chatForm.dataset.droppedFileName;
+            delete chatForm.dataset.droppedFileMimeType;
+
+
+            // Add a "Thinking..." message
+            // let thinkingMessageContent = '<span class="loading-dots">Thinking</span>';
+            let thinkingMessageContent = 'Thinking';
+
+            addMessage('agent', thinkingMessageContent);
+            const thinkingMessageDiv = chatMessages.lastElementChild;
+            const thinkingBubble = thinkingMessageDiv.querySelector('.message-bubble');
+
+
+            // Construct the newMessage parts array
+            const messageParts = [];
+            if (userMessage) {
+                messageParts.push({ text: userMessage });
+            }
+
+            // Add dropped file data if available
+            if (droppedFile) {
+                // Assuming "inlineData" for base64 encoded files
+                // and "fileData" for files referenced by URI (if your backend supports it)
+                messageParts.push({
+                    inlineData: {
+                        mimeType: droppedFileMimeType,
+                        data: droppedFile.split(',')[1], // Get base64 part after "data:image/png;base64,"
+                        displayName: droppedFileName || 'dropped_file'
+                    }
+                    // Or, if your backend supports fileUri, you might use:
+                    // fileData: {
+                    //    mimeType: droppedFileMimeType,
+                    //    fileUri: 'some_uploaded_url_from_your_backend', // You'd need to upload first
+                    //    displayName: droppedFileName || 'dropped_file'
+                    // }
+                });
+            }
+
+
+            if (!currentSessionId) {
+                console.error("Session not initialized. Please refresh or check server.");
+                // Remove thinking message if error occurred
+                if (thinkingBubble) {
+                    thinkingMessageDiv.remove();
+                }
+                addMessage('agent', `<span style="color: red;">Error: Session not active. Please refresh the page.</span>`);
+                sendButton.disabled = false;
+                userInput.disabled = false;
+                userInput.focus();
+                return;
+            }
+
+
+            const payload = JSON.stringify({
+                "appName": appName,
+                "userId": currentUserId,
+                "sessionId": currentSessionId, // Use the dynamically obtained session ID
+                "newMessage": {
+                    role: "user",
+                    parts: messageParts
+                },
+                streaming: false,
+            });
+
+            console.log('Payload to send:', payload);
+
+            try {
+                const response = await fetch(ADK_AGENT_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: payload,
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: response.statusText }));
+                    throw new Error(`HTTP error! Status: ${response.status} - ${JSON.stringify(errorData)}`);
+                }
+
+                const data = await response.json();
+
+                // Remove the "Thinking..." message
+                if (thinkingBubble) {
+                    thinkingMessageDiv.remove();
+                }
+
+                // Assuming the agent returns a response in data[0].content.parts[0].text
+                // let agentResponse = "No clear response from agent.";
+                let agentResponse = "... (give me a sec... I'll do my best, and ask me again)...";
+
+                if (data && data.length > 0 && data[0].content && data[0].content.parts && data[0].content.parts.length > 0) {
+                    // Check for text part
+                    const textPart = data[0].content.parts.find(part => part.text);
+                    if (textPart) {
+                        agentResponse = textPart.text;
+                    }
+                    // Check for image/inlineData part (if agent sends images back)
+                    const inlineDataPart = data[0].content.parts.find(part => part.inlineData);
+                    if (inlineDataPart && inlineDataPart.inlineData.data && inlineDataPart.inlineData.mimeType.startsWith('image/')) {
+                        const imageData = `data:${inlineDataPart.inlineData.mimeType};base64,${inlineDataPart.inlineData.data}`;
+                        addMessage('agent', agentResponse, imageData); // Add text and image
+                        console.log('Agent response with image:', imageData);
+                        return; // Exit as message is already added
+                    }
+                }
+
+                addMessage('agent', agentResponse);
+                console.log('Agent response:', agentResponse);
+
+            } catch (error) {
+                console.error('Error interacting with ADK Agent:', error);
+                if (thinkingBubble) {
+                    thinkingMessageDiv.remove();
+                }
+                addMessage('agent', `<span style="color: red;">Error: ${error.message || 'Could not connect to agent.'}</span>`);
+
+            } finally {
+                sendButton.disabled = false;
+                userInput.disabled = false;
+                userInput.focus();
+            }
+        });
+
+        // --- Drag and Drop Logic ---
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            chatContainer.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false); // Prevent whole page drop
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // Highlight drop zone when item is dragged over
+        ['dragenter', 'dragover'].forEach(eventName => {
+            chatContainer.addEventListener(eventName, () => chatContainer.classList.add('drag-over'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            chatContainer.addEventListener(eventName, () => chatContainer.classList.remove('drag-over'), false);
+        });
+
+        // Handle dropped files
+        chatContainer.addEventListener('drop', handleDrop, false);
+
+        async function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0) {
+                const file = files[0]; // Process only the first file for simplicity
+                if (file.type.startsWith('image/')) { // Only handle images for inlineData example
+                    await readFileAsBase64(file);
+                } else {
+                    console.warn('Dropped file is not an image:', file.type);
+                    // You could add a message to the chat indicating non-image files are not supported or handled differently
+                    addMessage('agent', `Warning: Only image files are currently supported for direct upload. Dropped file "${file.name}" will be ignored.`);
+                }
+            }
+        }
+
+        function readFileAsBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file); // Reads the file as a data URL (base64)
+                reader.onloadend = () => {
+                    // Store the base64 data and file info temporarily in the form's dataset
+                    chatForm.dataset.droppedFile = reader.result;
+                    chatForm.dataset.droppedFileName = file.name;
+                    chatForm.dataset.droppedFileMimeType = file.type;
+                    console.log(`File "${file.name}" (${file.type}) loaded.`);
+
+                    // Optionally, put the file name in the input box as a hint
+                    userInput.value = `File attached: ${file.name}`;
+                    resolve(reader.result);
+                };
+                reader.onerror = error => {
+                    console.error('Error reading file:', error);
+                    addMessage('agent', `<span style="color: red;">Error reading dropped file: ${error.message}</span>`);
+                    reject(error);
+                };
+            });
+        }
+    </script>
+</body>
+</html>
